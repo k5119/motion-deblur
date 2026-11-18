@@ -112,3 +112,52 @@ PSF Wiener·추정 PSF Wiener·NAFNet PNG와 `psf.json`, `metrics.json`을
 `wiener` 명령은 참조 영상이 없는 사진에도 사용할 수 있습니다.
 PSNR·SSIM은 선명한 참조 영상으로 합성한 비교 실험에서만 계산합니다.
 [수학적 원리와 실험 결과](docs/classical-restoration.md)
+
+## 공개 이미지 반복 실험
+
+기존 `test_images`의 파일 경로는 기존 CLI에서 그대로 사용할 수 있습니다.
+배치 CLI는 입력 폴더 아래의 다음 하위 폴더에서 이미지 유형을 읽습니다.
+
+| 하위 폴더 | 입력과 평가 방식 |
+| --- | --- |
+| `public` | 공개 선명 이미지. 축소 후 블러를 합성하고 처리 원본으로 PSNR·SSIM 계산 |
+| `captured_sharp` | 직접 촬영한 선명 이미지. 공개 이미지와 동일한 합성·평가 절차 |
+| `captured_blurred` | 직접 촬영한 흔들린 이미지. 추정 Wiener와 NAFNet 실행. 참조 화질 지표 및 실제 PSF 항목은 빈칸 |
+
+## 공개 샘플 출처
+
+세 이미지는 scikit-image v0.25.2의 샘플입니다.
+`--download-public`를 명시한 실행에서만 아래 PNG 세 개를 받으며, SHA-256으로
+검증합니다. 이미 존재하는 파일은 읽고 확인합니다. 네트워크 없이 실행하려면
+`public`에 준비한 선명 이미지를 두고 다운로드 옵션을 생략합니다.
+[scikit-image 출처·라이선스 설명](https://github.com/scikit-image/scikit-image/blob/v0.25.2/skimage/data/_fetchers.py)
+
+| 파일 | 원 출처 | 라이선스 |
+| --- | --- | --- |
+| [camera.png](https://raw.githubusercontent.com/scikit-image/scikit-image/v0.25.2/skimage/data/camera.png) | Lav Varshney 촬영 | CC0 |
+| [chelsea.png](https://raw.githubusercontent.com/scikit-image/scikit-image/v0.25.2/skimage/data/chelsea.png) | Stefan van der Walt 촬영 | CC0 |
+| [astronaut.png](https://raw.githubusercontent.com/scikit-image/scikit-image/v0.25.2/skimage/data/astronaut.png) | NASA Great Images, Eileen Collins | 퍼블릭 도메인 (scikit-image 표기) |
+
+### 빠른 실행과 전체 실행
+
+배치 전용 그래프 의존성을 설치하고 기존 PyTorch 환경과 NAFNet 가중치를
+사용합니다. 실행마다 새 출력 폴더를 지정합니다.
+
+```powershell
+python -m pip install -r requirements-batch.txt
+python -m motion_blur.batch test_images results\batch-quick --quick --download-public --max-size 192 --device cpu
+python -m motion_blur.batch test_images results\batch-full --device auto
+```
+
+- 빠른 실행은 유형마다 파일명 순서의 첫 이미지를 선택하고, 선명 입력에는 45°·15px 한 조건을 적용합니다.
+- 전체 실행은 모든 입력을 처리하고, 선명 이미지마다 0°·45°·90°와 9·15·21px의 아홉 조건을 비교합니다. 기본 긴 변 상한은 384px이며, 블러 합성 전에 적용합니다. 배치의 `--max-size 0`은 원본 해상도를 사용합니다.
+- FFT는 방향을 추정합니다. 비교에서 추정 Wiener에 주는 길이는 기본적으로 합성의 실제 길이이며, 촬영 블러의 기본 가정 길이는 15px입니다. `--estimated-length`로 공통 지정하거나 `--real-length`로 촬영 블러의 기본값을 바꿀 수 있습니다.
+- 각 실험 폴더에 `results.csv`, PSNR·SSIM의 전체 평균 및 각도×길이별 그래프와 처리 시간 그래프, `comparisons/`의 입력별 첫 조건 비교 이미지가 저장됩니다. 입력 기준 행도 CSV에 기록합니다. 누락되거나 계산 불가능한 값은 빈칸으로 기록합니다. 동일 영상의 PSNR은 `inf`입니다.
+- 시간은 모델 로드, 합성, 지표 계산, 저장을 제외합니다. 추정 Wiener는 FFT 방향 추정 시간을 포함합니다. 시간 그래프는 성공한 복원 표본의 평균과 표본 수를 표시합니다. 품질 그래프는 참조 원본이 있는 합성 사례 중 입력과 세 복원 방법 모두에서 해당 지표를 얻은 공통 사례만 집계합니다. 각도 패널의 길이별 막대는 별도 조건이며, 전체 평균은 같은 공통 사례를 고르게 한 건씩 반영합니다. 무한대 PSNR 평균은 ∞로 표시합니다.
+- 실패한 방법은 CSV에 원인을 기록합니다. 방향 추정 불가 또는 정답 PSF 부재로 생략한 경우는 `skipped_…`, 실행 실패는 `failed`로 구분합니다. 실패 행이 있으면 명령은 종료 코드 1을 반환합니다.
+
+GUI에서는 CLI 인자 해석을 거치지 않고
+`motion_blur.batch.run_batch(BatchOptions(input=Path(...), output=Path(...)))`를
+호출할 수 있습니다. 이 함수는 동기 실행이므로 GUI에서는 작업 스레드에서
+호출합니다. 실패 행이 있으면 1을 반환하고, 실행 자체가 불가능하면 예외를
+전달합니다.
