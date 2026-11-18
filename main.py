@@ -6,6 +6,7 @@ from pathlib import Path
 from time import perf_counter
 
 from motion_blur.analysis import analyze_image
+from motion_blur.decision import ASSESSMENT_MAX_SIZE, decide_correction
 from motion_blur.image_io import Image, limit_image_size, load_image, save_image
 
 LOGGER = logging.getLogger(__name__)
@@ -91,6 +92,14 @@ def main(argv: list[str] | None = None) -> int:
         direction = analysis.motion_direction
         angle = "추정 불가" if direction.angle_deg is None else f"{direction.angle_deg:.2f}°"
         LOGGER.info("FFT 모션 축 후보 — %s (방향성 점수 %.3f)", angle, direction.confidence)
+        assessment_image = limit_image_size(image, ASSESSMENT_MAX_SIZE)
+        assessment_height, assessment_width = assessment_image.shape[:2]
+        assessment_analysis = analysis if assessment_image is image else analyze_image(assessment_image)
+        assessment = decide_correction(assessment_analysis)
+        LOGGER.info(
+            "보정 판단 (%d × %d) — %s. %s",
+            assessment_width, assessment_height, assessment.decision.label, assessment.reason,
+        )
         if args.output is None:
             return 0
 
