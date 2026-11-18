@@ -30,6 +30,23 @@ def load_image(path: Path) -> Image:
     return image
 
 
+def limit_image_size(image: Image, max_size: int) -> Image:
+    """uint8 BGR 이미지의 긴 변을 최대 max_size 픽셀로 줄여 반환한다."""
+    if max_size < 1:
+        raise ValueError("이미지 크기 제한은 1 이상이어야 합니다.")
+    height, width = image.shape[:2]
+    long_side = max(height, width)
+    if long_side <= max_size:
+        return image
+
+    scale = max_size / long_side
+    size = (max(1, round(width * scale)), max(1, round(height * scale)))
+    try:
+        return cv2.resize(image, size, interpolation=cv2.INTER_AREA)
+    except cv2.error as exc:
+        raise ValueError(f"이미지를 {size[0]} × {size[1]}로 축소할 수 없습니다.") from exc
+
+
 def save_image(path: Path, image: Image) -> Path:
     """(H, W, 3) uint8 BGR 배열을 PNG로 저장하고 출력 경로를 반환한다."""
     if path.suffix.lower() != ".png":
