@@ -1,6 +1,6 @@
 # NAFNet 모션 블러 복원
 
-흔들린 사진 한 장을 공식 NAFNet-GoPro-width32 모델로 복원해 PNG로 저장하는 Python CLI입니다. 자동 블러 분석과 보정 여부 판단은 인터페이스 단계이며, CLI는 지정한 사진에 복원을 적용합니다.
+사진 한 장의 밝기, 노출 분포, 선명도를 분석하고 공식 NAFNet-GoPro-width32 모델로 복원해 PNG로 저장하는 Python CLI입니다. 보정 여부 판단은 별도 인터페이스이며, 복원 명령은 분석 지표를 출력한 뒤 복원을 진행합니다.
 
 ## 개발 환경
 
@@ -42,5 +42,25 @@ python main.py "test_images\test.jpg" "results\restored_768.png" --max-size 768
 python main.py "test_images\test.jpg" "results\restored_512.png" --max-size 512
 python main.py "test_images\test.jpg" "results\restored_cpu.png" --max-size 512 --device cpu
 ```
+
+## 품질 분석만 실행
+
+```powershell
+python main.py "test_images\test.jpg" --analyze-only
+```
+
+분석 전용 실행에는 NumPy와 OpenCV가 필요합니다. 결과는 터미널에 출력됩니다.
+복원 명령에서도 같은 분석을 먼저 실행합니다. 두 경우 모두 원본 해상도를
+분석하며, `--max-size`는 복원에만 적용됩니다.
+
+| 지표 | 계산 방법 |
+| --- | --- |
+| 평균 밝기 | OpenCV로 변환한 8비트 그레이스케일의 산술평균 (0~255) |
+| 어두운·밝은 픽셀 비율 | 각각 0~50, 205~255 구간의 픽셀 수 ÷ 전체 픽셀 수. 터미널은 백분율로 표시 |
+| 그레이스케일 히스토그램 | 0부터 255까지 각 명암값의 픽셀 수 |
+| 선명도 | 그레이스케일에 적용한 64비트 Laplacian 응답의 모집단 분산 (`ksize=1`) |
+
+밝기 구간은 픽셀 분포를 요약하는 기준입니다. Laplacian 분산은 경계
+강도에 반응하며 이미지의 질감, 노이즈, 해상도에 따라서도 달라집니다.
 
 `motion_blur/_nafnet/`에는 공식 평가 설정에 맞춘 추론 코드와 라이선스가 포함되어 있습니다. [NAFNet 공식 평가 설정](https://github.com/megvii-research/NAFNet/blob/2b4af71ebe098a92a75910c233a3965a3e93ede4/options/test/GoPro/NAFNet-width32.yml)
