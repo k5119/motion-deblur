@@ -2,7 +2,7 @@
 
 from enum import Enum
 
-from .analysis import BlurAnalysis
+from .analysis import ImageQualityAnalysis
 
 
 class CorrectionDecision(str, Enum):
@@ -13,6 +13,6 @@ class CorrectionDecision(str, Enum):
     UNDETERMINED = "undetermined"
 
 
-def decide_correction(analysis: BlurAnalysis) -> CorrectionDecision:
-    """BlurAnalysis를 받아 보정 여부를 반환한다."""
+def decide_correction(analysis: ImageQualityAnalysis) -> CorrectionDecision:
+    """ImageQualityAnalysis를 받아 보정 여부를 반환한다."""
     return CorrectionDecision.UNDETERMINED
