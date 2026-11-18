@@ -6,6 +6,7 @@ import cv2
 import numpy as np
 
 from .image_io import Image
+from .motion_direction import MotionDirection, estimate_motion_direction
 
 DARK_PIXEL_MAX = 50
 BRIGHT_PIXEL_MIN = 205
@@ -13,13 +14,14 @@ BRIGHT_PIXEL_MIN = 205
 
 @dataclass(frozen=True)
 class ImageQualityAnalysis:
-    """평균 밝기, 두 픽셀 비율(0~1), 256개 빈도, Laplacian 분산을 담는다."""
+    """밝기·노출 분포, Laplacian 분산과 FFT 방향 후보를 담는다."""
 
     mean_brightness: float
     dark_pixel_ratio: float
     bright_pixel_ratio: float
     grayscale_histogram: tuple[int, ...]
     laplacian_variance: float
+    motion_direction: MotionDirection
 
 
 def analyze_image(image: Image) -> ImageQualityAnalysis:
@@ -44,4 +46,5 @@ def analyze_image(image: Image) -> ImageQualityAnalysis:
         bright_pixel_ratio=float(histogram[BRIGHT_PIXEL_MIN:].sum() / gray.size),
         grayscale_histogram=tuple(histogram.tolist()),
         laplacian_variance=float(laplacian.var()),
+        motion_direction=estimate_motion_direction(gray),
     )

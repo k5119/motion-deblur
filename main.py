@@ -88,7 +88,9 @@ def main(argv: list[str] | None = None) -> int:
             width, height, analysis.mean_brightness, 100 * analysis.dark_pixel_ratio,
             100 * analysis.bright_pixel_ratio, analysis.laplacian_variance,
         )
-        LOGGER.info("원본 그레이스케일 히스토그램 (0~255) — %s", list(analysis.grayscale_histogram))
+        direction = analysis.motion_direction
+        angle = "추정 불가" if direction.angle_deg is None else f"{direction.angle_deg:.2f}°"
+        LOGGER.info("FFT 모션 축 후보 — %s (방향성 점수 %.3f)", angle, direction.confidence)
         if args.output is None:
             return 0
 
