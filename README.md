@@ -33,4 +33,14 @@ CPU 전용 PC에서는 아래 명령으로 PyTorch를 설치합니다. NVIDIA GP
 
 기본 설정은 CUDA를 사용할 수 있으면 CUDA를 선택하고, 그 외에는 CPU를 사용합니다. 장치를 지정하려면 `--device cpu` 또는 `--device cuda`를 추가합니다. 출력 폴더는 자동으로 만들며 기존 파일을 보호하므로 재실행 시 새 출력 파일명을 지정합니다.
 
+기본 실행은 원본 해상도를 사용합니다. `--max-size`에 양의 정수를 지정하면
+가로세로 비율을 유지하며 긴 변을 해당 픽셀 수로 제한합니다. 제한 이하의 입력은
+그대로 처리하고, 결과 PNG는 실제 복원 해상도로 저장합니다.
+
+```powershell
+python main.py "test_images\test.jpg" "results\restored_768.png" --max-size 768
+python main.py "test_images\test.jpg" "results\restored_512.png" --max-size 512
+python main.py "test_images\test.jpg" "results\restored_cpu.png" --max-size 512 --device cpu
+```
+
 `motion_blur/_nafnet/`에는 공식 평가 설정에 맞춘 추론 코드와 라이선스가 포함되어 있습니다. [NAFNet 공식 평가 설정](https://github.com/megvii-research/NAFNet/blob/2b4af71ebe098a92a75910c233a3965a3e93ede4/options/test/GoPro/NAFNet-width32.yml)

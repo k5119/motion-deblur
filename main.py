@@ -7,11 +7,22 @@ from time import perf_counter
 
 import torch
 
-from motion_blur.image_io import load_image, save_image
+from motion_blur.image_io import limit_image_size, load_image, save_image
 from motion_blur.restoration import load_model, restore_image, select_device
 
 LOGGER = logging.getLogger(__name__)
 DEFAULT_WEIGHTS = Path("models") / "NAFNet-GoPro-width32.pth"
+
+
+def positive_int(value: str) -> int:
+    """CLI 문자열을 양의 정수로 변환하고 잘못된 값은 argparse에 알린다."""
+    try:
+        size = int(value)
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError("1 이상의 정수를 입력하세요.") from exc
+    if size < 1:
+        raise argparse.ArgumentTypeError("1 이상의 정수를 입력하세요.")
+    return size
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -21,6 +32,10 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("output", type=Path, help="출력 PNG 경로")
     parser.add_argument("--weights", type=Path, default=DEFAULT_WEIGHTS, help="로컬 가중치 경로")
     parser.add_argument("--device", choices=("auto", "cpu", "cuda"), default="auto")
+    parser.add_argument(
+        "--max-size", type=positive_int, metavar="PX",
+        help="복원 전 이미지의 긴 변을 최대 PX로 축소 (기본값은 원본 크기)",
+    )
     parser.add_argument("--verbose", action="store_true", help="오류 발생 시 스택 추적도 출력")
     args = parser.parse_args(argv)
     logging.basicConfig(
@@ -38,6 +53,10 @@ def main(argv: list[str] | None = None) -> int:
         image = load_image(args.input)
         height, width = image.shape[:2]
         LOGGER.info("입력 — %s (%d × %d)", args.input, width, height)
+        if args.max_size is not None:
+            image = limit_image_size(image, args.max_size)
+            height, width = image.shape[:2]
+            LOGGER.info("복원 입력 크기 — %d × %d (긴 변 제한 %dpx)", width, height, args.max_size)
         device = select_device(args.device)
         LOGGER.info("실행 장치 — %s (요청 %s, PyTorch %s)", device, args.device, torch.__version__)
 
