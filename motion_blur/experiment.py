@@ -12,7 +12,7 @@ import numpy as np
 from . import DEFAULT_WEIGHTS
 from .classical import DEFAULT_WIENER_K, apply_motion_blur, compare_quality, linear_psf, wiener_restore
 from .image_io import Image, limit_image_size, load_image, save_image
-from .motion_direction import estimate_motion_direction
+from .motion_direction import MotionDirection, estimate_motion_direction
 
 LOGGER = logging.getLogger(__name__)
 PSF_MODEL = "linear_bilinear_reflect101_v1"
@@ -38,9 +38,12 @@ def read_psf(path: Path, image: Image) -> tuple[int, float]:
     return length, float(angle)
 
 
-def estimated_wiener(image: Image, length: int, k: float) -> tuple[Image | None, dict]:
+def estimated_wiener(
+    image: Image, length: int, k: float, *, direction: MotionDirection | None = None,
+) -> tuple[Image | None, dict]:
     """FFT 방향 후보와 사용자가 지정한 길이로 Wiener 복원을 시도한다."""
-    direction = estimate_motion_direction(cv2.cvtColor(image, cv2.COLOR_BGR2GRAY))
+    if direction is None:
+        direction = estimate_motion_direction(cv2.cvtColor(image, cv2.COLOR_BGR2GRAY))
     info = {"length_px": length, "angle_deg": direction.angle_deg, "direction_score": direction.confidence}
     if direction.angle_deg is None:
         LOGGER.warning("추정 PSF 복원 생략 — FFT 방향 추정 불가 (점수 %.3f).", direction.confidence)
@@ -62,7 +65,7 @@ def run_synthetic(args: argparse.Namespace, reference: Image) -> None:
     """합성 블러를 저장하고 비교 모드에서는 동일 크기로 모든 지표를 계산한다."""
     if args.output_dir.exists():
         raise FileExistsError(f"새 출력 폴더를 지정하세요. ({args.output_dir})")
-    if args.max_size is not None:
+    if args.max_size:
         reference = limit_image_size(reference, args.max_size)
 
     psf = linear_psf(args.length, args.angle)
@@ -128,13 +131,14 @@ def main(argv: list[str] | None = None) -> int:
     wiener.add_argument("output", type=Path, help="새 출력 PNG")
     source = wiener.add_mutually_exclusive_group(required=True)
     source.add_argument("--psf", type=Path, help="합성 시 저장한 정답 PSF JSON")
+    source.add_argument("--angle", type=float, help="수동 PSF 각도")
     source.add_argument("--estimate", action="store_true", help="FFT 방향 후보 사용")
     wiener.add_argument("--length", type=int, help="추정 PSF에 사용할 길이(px)")
     for command in (compare, wiener):
         command.add_argument("--k", type=float, default=DEFAULT_WIENER_K, help="양의 Wiener 정규화 상수")
     args = parser.parse_args(argv)
-    if args.command == "wiener" and args.estimate != (args.length is not None):
-        parser.error("--length는 --estimate와 함께 지정해야 합니다.")
+    if args.command == "wiener" and (args.estimate or args.angle is not None) != (args.length is not None):
+        parser.error("--length는 --estimate 또는 --angle과 함께 지정해야 합니다.")
 
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
     try:
@@ -157,6 +161,9 @@ def main(argv: list[str] | None = None) -> int:
             restored, _ = estimated_wiener(image, args.length, args.k)
             if restored is None:
                 return 1
+        elif args.angle is not None:
+            LOGGER.info("수동 PSF — 각도 %.2f°, 길이 %dpx", args.angle, args.length)
+            restored = wiener_restore(image, linear_psf(args.length, args.angle), args.k)
         else:
             length, angle = read_psf(args.psf, image)
             LOGGER.info("정답 PSF — 각도 %.2f°, 길이 %dpx", angle, length)

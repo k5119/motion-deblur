@@ -2,8 +2,8 @@
 
 import argparse
 from collections.abc import Callable
-from dataclasses import dataclass
 import csv
+from dataclasses import dataclass
 import hashlib
 from itertools import product
 import logging
@@ -15,7 +15,9 @@ import cv2
 import numpy as np
 
 from . import DEFAULT_WEIGHTS
+from .analysis import analyze_image
 from .classical import DEFAULT_WIENER_K, apply_motion_blur, compare_quality, linear_psf, wiener_restore
+from .decision import ASSESSMENT_MAX_SIZE
 from .experiment import estimated_wiener
 from .image_io import Image, limit_image_size, load_image
 
@@ -30,6 +32,8 @@ PUBLIC_HASHES = {
 }
 FIELDS = (
     "image", "data_type", "original_width", "original_height", "processed_width", "processed_height",
+    "analysis_width", "analysis_height", "laplacian_variance", "mean_brightness",
+    "applied_angle_deg", "applied_length_px",
     "actual_angle_deg", "actual_length_px", "estimated_angle_deg", "estimated_length_px",
     "direction_score", "axial_error_deg", "method", "wiener_k", "psnr_db", "ssim", "elapsed_ms",
     "device", "status", "detail",
@@ -45,7 +49,8 @@ class BatchOptions:
     output: Path
     quick: bool = False
     download_public: bool = False
-    max_size: int = 384
+    max_size: int = 0
+    real_angle: float | None = None
     estimated_length: int | None = None
     real_length: int = 15
     k: float = DEFAULT_WIENER_K
@@ -53,6 +58,8 @@ class BatchOptions:
     weights: Path = DEFAULT_WEIGHTS
 
     def __post_init__(self) -> None:
+        if self.real_angle is not None and not np.isfinite(self.real_angle):
+            raise ValueError("수동 각도는 유한한 값이어야 합니다.")
         if self.max_size < 0:
             raise ValueError("최대 크기는 0 이상이어야 합니다.")
         if self.real_length < 1 or (self.estimated_length is not None and self.estimated_length < 1):
@@ -104,7 +111,16 @@ def evaluate_case(
     psf = linear_psf(length, angle) if length is not None else None
     observed = apply_motion_blur(source, psf) if psf is not None else source
     candidate_length = args.estimated_length or length or args.real_length
-    common = {**base, "actual_angle_deg": angle, "actual_length_px": length}
+    analysis_image = limit_image_size(observed, ASSESSMENT_MAX_SIZE)
+    analysis = analyze_image(analysis_image)
+    common = {
+        **base, "actual_angle_deg": angle, "actual_length_px": length,
+        "analysis_width": analysis_image.shape[1], "analysis_height": analysis_image.shape[0],
+        "laplacian_variance": analysis.laplacian_variance, "mean_brightness": analysis.mean_brightness,
+    }
+    LOGGER.info("크기 — 원본 %s×%s / 분석 %d×%d / 복원 %d×%d",
+                base.get("original_width", source.shape[1]), base.get("original_height", source.shape[0]),
+                analysis_image.shape[1], analysis_image.shape[0], source.shape[1], source.shape[0])
     images = {"input": observed}
     rows = []
     baseline = {**common, "method": "input", "status": "ok"}
@@ -112,7 +128,10 @@ def evaluate_case(
         baseline["psnr_db"], baseline["ssim"] = compare_quality(reference, observed)
     rows.append(baseline)
 
-    for method in ("wiener_known", "wiener_estimated", "nafnet"):
+    methods = ["wiener_known", "wiener_estimated", "nafnet"]
+    if reference is None and args.real_angle is not None:
+        methods.insert(2, "wiener_manual")
+    for method in methods:
         row = {**common, "method": method, "device": device if method == "nafnet" else "cpu"}
         rows.append(row)
         if method != "nafnet":
@@ -131,7 +150,7 @@ def evaluate_case(
             if method == "wiener_known":
                 image = wiener_restore(observed, psf, args.k)
             elif method == "wiener_estimated":
-                image, info = estimated_wiener(observed, candidate_length, args.k)
+                image, info = estimated_wiener(observed, candidate_length, args.k, direction=analysis.motion_direction)
                 estimated = info["angle_deg"]
                 row.update(estimated_angle_deg=estimated, direction_score=info["direction_score"])
                 if angle is not None and estimated is not None:
@@ -139,6 +158,10 @@ def evaluate_case(
                 if image is None:
                     row.update(status="skipped_no_direction", detail="No reliable FFT direction")
                     continue
+            elif method == "wiener_manual":
+                manual_angle = args.real_angle % 180
+                row.update(applied_angle_deg=manual_angle, applied_length_px=args.real_length)
+                image = wiener_restore(observed, linear_psf(args.real_length, manual_angle), args.k)
             else:
                 image = nafnet(observed)
 
@@ -178,7 +201,7 @@ def make_nafnet(args: BatchOptions) -> tuple[Callable[[Image], Image], str]:
 
 def run_batch(args: BatchOptions) -> int:
     """CSV를 사례별로 기록하고 대표 입력별 몽타주와 요약 그래프를 저장한다."""
-    from .batch_report import save_charts, save_montage
+    from .batch_report import save_charts, save_direction_errors, save_montage
 
     if args.output.exists():
         raise FileExistsError(f"새 실험 폴더를 지정하세요. ({args.output})")
@@ -238,9 +261,18 @@ def run_batch(args: BatchOptions) -> int:
                 file.flush()
                 all_rows.extend(rows)
                 if case_index == 0 and images:
-                    save_montage(montage_dir / f"{index:03d}-{kind}.png", source if length is not None else None, images)
+                    save_montage(montage_dir / f"{index:03d}-{kind}.png", source if length is not None else None, images,
+                                 {row["method"]: row["status"] for row in rows})
 
     save_charts(args.output, all_rows)
+    save_direction_errors(args.output, all_rows)
+    image_tables = args.output / "image_tables"
+    image_tables.mkdir()
+    for index, (kind, path) in enumerate(inputs, 1):
+        with (image_tables / f"{index:03d}-{kind}.csv").open("x", encoding="utf-8-sig", newline="") as file:
+            writer = csv.DictWriter(file, fieldnames=FIELDS)
+            writer.writeheader()
+            writer.writerows(row for row in all_rows if (row["data_type"], row["image"]) == (kind, path.name))
     LOGGER.info("실험 결과 — %s (%d행)", args.output, len(all_rows))
     return int(any(row["status"] == "failed" for row in all_rows))
 
@@ -252,8 +284,9 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("output", type=Path, help="새 실험 출력 폴더")
     parser.add_argument("--quick", action="store_true", help="유형당 첫 입력과 한 가지 합성 조건")
     parser.add_argument("--download-public", action="store_true", help="공개 샘플 PNG 3개만 받기")
-    parser.add_argument("--max-size", type=int, default=384, help="실험 전 긴 변 상한 (기본 384, 0은 원본 크기)")
+    parser.add_argument("--max-size", type=int, default=0, help="실험 전 긴 변 상한 (기본 0, 원본 크기)")
     parser.add_argument("--estimated-length", type=int, help="추정 Wiener 길이 재지정(px)")
+    parser.add_argument("--real-angle", type=float, help="실제 촬영 블러의 수동 Wiener 각도")
     parser.add_argument("--real-length", type=int, default=15, help="촬영 블러의 가정 길이(px)")
     parser.add_argument("--k", type=float, default=DEFAULT_WIENER_K)
     parser.add_argument("--device", choices=("auto", "cpu", "cuda"), default="auto")

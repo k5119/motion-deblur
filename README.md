@@ -150,10 +150,10 @@ python -m motion_blur.batch test_images results\batch-full --device auto
 ```
 
 - 빠른 실행은 유형마다 파일명 순서의 첫 이미지를 선택하고, 선명 입력에는 45°·15px 한 조건을 적용합니다.
-- 전체 실행은 모든 입력을 처리하고, 선명 이미지마다 0°·45°·90°와 9·15·21px의 아홉 조건을 비교합니다. 기본 긴 변 상한은 384px이며, 블러 합성 전에 적용합니다. 배치의 `--max-size 0`은 원본 해상도를 사용합니다.
+- 전체 실행은 모든 입력을 처리하고, 선명 이미지마다 0°·45°·90°와 9·15·21px의 아홉 조건을 비교합니다. 기본값과 `--max-size 0`은 원본 해상도입니다. 양의 값은 블러 합성 전에 적용합니다. 배치 분석은 관측 영상의 긴 변을 최대 512px로 제한하며 PSF 길이는 복원 해상도의 픽셀 단위입니다.
 - FFT는 방향을 추정합니다. 비교에서 추정 Wiener에 주는 길이는 기본적으로 합성의 실제 길이이며, 촬영 블러의 기본 가정 길이는 15px입니다. `--estimated-length`로 공통 지정하거나 `--real-length`로 촬영 블러의 기본값을 바꿀 수 있습니다.
-- 각 실험 폴더에 `results.csv`, PSNR·SSIM의 전체 평균 및 각도×길이별 그래프와 처리 시간 그래프, `comparisons/`의 입력별 첫 조건 비교 이미지가 저장됩니다. 입력 기준 행도 CSV에 기록합니다. 누락되거나 계산 불가능한 값은 빈칸으로 기록합니다. 동일 영상의 PSNR은 `inf`입니다.
-- 시간은 모델 로드, 합성, 지표 계산, 저장을 제외합니다. 추정 Wiener는 FFT 방향 추정 시간을 포함합니다. 시간 그래프는 성공한 복원 표본의 평균과 표본 수를 표시합니다. 품질 그래프는 참조 원본이 있는 합성 사례 중 입력과 세 복원 방법 모두에서 해당 지표를 얻은 공통 사례만 집계합니다. 각도 패널의 길이별 막대는 별도 조건이며, 전체 평균은 같은 공통 사례를 고르게 한 건씩 반영합니다. 무한대 PSNR 평균은 ∞로 표시합니다.
+- 각 실험 폴더에 `results.csv`, PSNR·SSIM의 전체 평균 및 각도×길이별 그래프와 처리 시간·FFT 축 오차 그래프, `image_tables/`의 이미지별 표, `comparisons/`의 입력별 첫 조건 비교 이미지가 저장됩니다. 입력 기준 행도 CSV에 기록합니다. 누락되거나 계산 불가능한 값은 빈칸으로 기록합니다. 동일 영상의 PSNR은 `inf`입니다.
+- 시간은 모델 로드, 합성, 지표 계산, 저장을 제외합니다. FFT는 별도의 분석 단계에서 계산합니다. 복원 처리 시간에는 FFT 방향 추정이 포함되지 않습니다. 시간 그래프는 성공한 복원 표본의 평균과 표본 수를 표시합니다. 품질 그래프는 참조 원본이 있는 합성 사례 중 입력과 세 복원 방법 모두에서 해당 지표를 얻은 공통 사례만 집계합니다. 각도 패널의 길이별 막대는 별도 조건이며, 전체 평균은 같은 공통 사례를 고르게 한 건씩 반영합니다. 무한대 PSNR 평균은 ∞로 표시합니다.
 - 실패한 방법은 CSV에 원인을 기록합니다. 방향 추정 불가 또는 정답 PSF 부재로 생략한 경우는 `skipped_…`, 실행 실패는 `failed`로 구분합니다. 실패 행이 있으면 명령은 종료 코드 1을 반환합니다.
 
 GUI에서는 CLI 인자 해석을 거치지 않고
@@ -161,3 +161,30 @@ GUI에서는 CLI 인자 해석을 거치지 않고
 호출할 수 있습니다. 이 함수는 동기 실행이므로 GUI에서는 작업 스레드에서
 호출합니다. 실패 행이 있으면 1을 반환하고, 실행 자체가 불가능하면 예외를
 전달합니다.
+
+## 임계값 및 복원 품질 검증
+
+라벨 CSV는 `path,label,split` 열을 사용합니다. `label`은 `sharp` 또는
+`blurred`, `split`은 `validation` 또는 `test`입니다. 각 분할에 두 라벨을
+포함하고, 같은 원본에서 만든 파생 영상은 모두 같은 분할에 넣습니다.
+Laplacian 후보는 검증 분할에서 선택하고 테스트 분할에서 선택값만 평가합니다.
+FFT 그래프의 후보 반환률은 각도 정확도나 모션 블러 확률을 뜻하지 않습니다.
+
+```powershell
+python -m motion_blur.validate_thresholds labels.csv results/thresholds
+python -m motion_blur.wiener_sweep test_images/public/camera.png results/wiener-camera --angle 45 --length 15
+python -m motion_blur.check_nafnet test_images/public/camera.png results/nafnet-camera --device cpu --max-size 384
+python -m motion_blur.check_nafnet test_images/captured_blurred/blur.jpg results/nafnet-real --real --device cuda
+python -m motion_blur.experiment wiener test_images/captured_blurred/blur.jpg results/manual.png --angle 30 --length 15
+python -m motion_blur.batch test_images results/batch-manual --quick --real-angle 30 --real-length 15
+python main.py test_images/public/camera.png --analyze-only --laplacian-low 300 --laplacian-high 1000 --fft-confidence 0.2
+```
+
+배치의 수동 각도는 촬영 블러 유형에만 적용하며 자동 추정 결과와 별도입니다.
+Wiener K 실험은 정답 PSF, 추정 방향 PSF, 방향·길이 오차 PSF를 구분하고
+복원 PNG, 원본과의 절대 차 PNG, CSV와 그래프를 저장합니다. NAFNet 점검은
+같은 관측 영상을 원본 크기와 명시한 축소 크기로 각각 실행합니다. 축소
+출력은 지표 비교에 한해 원본 크기로 보간합니다. CUDA에서는 최고 allocated/
+reserved 바이트를 기록하며, 메모리가 부족해도 해상도를 자동으로 낮추지
+않습니다. `--real`은 참조 지표를 비워 둡니다.
+[실험 수치 및 남은 검증](docs/followup-validation.md)

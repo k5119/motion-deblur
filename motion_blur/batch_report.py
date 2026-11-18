@@ -104,12 +104,13 @@ def save_charts(output: Path, rows: list[dict]) -> None:
         if row["status"] == "ok" and elapsed is not None and np.isfinite(elapsed):
             timings[row["method"], row["device"]].append(elapsed)
 
+    labels = {**METHOD_LABELS, "wiener_manual": "Wiener (manual)"}
     figure = Figure(figsize=(8, 4), layout="constrained")
     ax = figure.subplots()
     if timings:
         groups = sorted(timings)
         bars = ax.bar(
-            [f"{METHOD_LABELS[method]} ({device})\nn={len(timings[method, device])}" for method, device in groups],
+            [f"{labels[method]} ({device})\nn={len(timings[method, device])}" for method, device in groups],
             [np.mean(timings[group]) for group in groups],
         )
         ax.bar_label(bars, fmt="%.3g", padding=3)
@@ -121,17 +122,44 @@ def save_charts(output: Path, rows: list[dict]) -> None:
     save_figure(figure, output / "elapsed_ms.png", dpi=140)
 
 
-def save_montage(path: Path, reference: Image | None, images: dict[str, Image]) -> None:
+def save_direction_errors(output: Path, rows: list[dict]) -> None:
+    """합성 조건별 FFT 축 오차와 후보 반환 건수를 표시한다."""
+    groups = defaultdict(list)
+    for row in rows:
+        if row["method"] == "wiener_estimated" and row["data_type"] in {"public", "captured_sharp"}:
+            groups[row["actual_angle_deg"], row["actual_length_px"]].append(row.get("axial_error_deg"))
+    figure = Figure(figsize=(10, 4), layout="constrained")
+    ax = figure.subplots()
+    labels, means = [], []
+    for (angle, length), errors in sorted(groups.items()):
+        valid = [error for error in errors if error is not None]
+        labels.append(f"{angle}° / {length}px\n{len(valid)}/{len(errors)}")
+        means.append(float(np.mean(valid)) if valid else np.nan)
+    if groups:
+        bars = ax.bar(labels, means)
+        ax.bar_label(bars, fmt="%.2f", padding=3)
+        ax.margins(y=0.18)
+    else:
+        ax.text(0.5, 0.5, "No synthetic conditions", transform=ax.transAxes, ha="center")
+    ax.set(title="Mean FFT axial error (estimates / cases)", ylabel="Degrees")
+    save_figure(figure, output / "fft_axial_error.png", dpi=140)
+
+
+def save_montage(path: Path, reference: Image | None, images: dict[str, Image], statuses: dict[str, str] | None = None) -> None:
     """참조와 방법별 결과를 동일한 패널 크기의 PNG로 저장한다."""
-    panels = [("Reference", reference)]
-    panels.extend((label, images.get(method)) for method, label in METHOD_LABELS.items())
+    statuses = statuses or {}
+    labels = dict(METHOD_LABELS)
+    if "wiener_manual" in statuses:
+        labels["wiener_manual"] = "Wiener (manual)"
+    panels = [("Reference", reference, "No reference")]
+    panels.extend((label, images.get(method), statuses.get(method, "Not run")) for method, label in labels.items())
     figure = Figure(figsize=(13, 3.2), layout="constrained")
     axes = figure.subplots(1, len(panels))
-    for ax, (label, image) in zip(axes, panels):
+    for ax, (label, image, status) in zip(axes, panels):
         ax.set_title(label)
         ax.axis("off")
         if image is None:
-            ax.text(0.5, 0.5, "Unavailable", transform=ax.transAxes, ha="center")
+            ax.text(0.5, 0.5, status.replace("_", " "), transform=ax.transAxes, ha="center")
         else:
             ax.imshow(image[:, :, ::-1])
     save_figure(figure, path, dpi=120)

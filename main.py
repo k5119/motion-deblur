@@ -7,8 +7,11 @@ from time import perf_counter
 
 from motion_blur import DEFAULT_WEIGHTS
 from motion_blur.analysis import analyze_image
-from motion_blur.decision import ASSESSMENT_MAX_SIZE, decide_correction
+from motion_blur.decision import (
+    ASSESSMENT_MAX_SIZE, HIGH_LAPLACIAN_VARIANCE, LOW_LAPLACIAN_VARIANCE, decide_correction,
+)
 from motion_blur.image_io import Image, limit_image_size, load_image, save_image
+from motion_blur.motion_direction import MIN_CONFIDENCE
 
 LOGGER = logging.getLogger(__name__)
 
@@ -61,7 +64,12 @@ def main(argv: list[str] | None = None) -> int:
         help="복원 전 이미지의 긴 변을 최대 PX로 축소 (기본값은 원본 크기)",
     )
     parser.add_argument("--verbose", action="store_true", help="오류 발생 시 스택 추적도 출력")
+    parser.add_argument("--fft-confidence", type=float, default=MIN_CONFIDENCE)
+    parser.add_argument("--laplacian-low", type=float, default=LOW_LAPLACIAN_VARIANCE)
+    parser.add_argument("--laplacian-high", type=float, default=HIGH_LAPLACIAN_VARIANCE)
     args = parser.parse_args(argv)
+    if not (0 <= args.fft_confidence <= 1 and 0 <= args.laplacian_low < args.laplacian_high < float("inf")):
+        parser.error("FFT 기준은 0~1, Laplacian 기준은 0 ≤ low < high여야 합니다.")
     if args.analyze_only and args.output is not None:
         parser.error("--analyze-only에는 출력 PNG 경로를 지정하지 않습니다.")
     if not args.analyze_only and args.output is None:
@@ -82,7 +90,7 @@ def main(argv: list[str] | None = None) -> int:
         image = load_image(args.input)
         height, width = image.shape[:2]
         LOGGER.info("입력 — %s (%d × %d)", args.input, width, height)
-        analysis = analyze_image(image)
+        analysis = analyze_image(image, fft_confidence=args.fft_confidence)
         LOGGER.info(
             "원본 품질 분석 (%d × %d) — 평균 밝기 %.2f, 어두운 픽셀 %.2f%%, "
             "밝은 픽셀 %.2f%%, Laplacian 분산 %.4f",
@@ -94,8 +102,12 @@ def main(argv: list[str] | None = None) -> int:
         LOGGER.info("FFT 모션 축 후보 — %s (방향성 점수 %.3f)", angle, direction.confidence)
         assessment_image = limit_image_size(image, ASSESSMENT_MAX_SIZE)
         assessment_height, assessment_width = assessment_image.shape[:2]
-        assessment_analysis = analysis if assessment_image is image else analyze_image(assessment_image)
-        assessment = decide_correction(assessment_analysis)
+        assessment_analysis = analysis
+        if assessment_image is not image:
+            assessment_analysis = analyze_image(assessment_image, fft_confidence=args.fft_confidence)
+        assessment = decide_correction(
+            assessment_analysis, low_laplacian=args.laplacian_low, high_laplacian=args.laplacian_high,
+        )
         LOGGER.info(
             "보정 판단 (%d × %d) — %s. %s",
             assessment_width, assessment_height, assessment.decision.label, assessment.reason,
@@ -106,7 +118,7 @@ def main(argv: list[str] | None = None) -> int:
         if args.max_size is not None:
             image = limit_image_size(image, args.max_size)
             height, width = image.shape[:2]
-            LOGGER.info("복원 입력 크기 — %d × %d (긴 변 제한 %dpx)", width, height, args.max_size)
+        LOGGER.info("복원 입력 크기 — %d × %d", width, height)
         restore_and_save(image, args.output, args.weights, args.device)
     except (OSError, RuntimeError, ValueError, MemoryError, ImportError) as exc:
         LOGGER.error("처리 실패 — %s", exc or type(exc).__name__, exc_info=args.verbose)

@@ -41,7 +41,10 @@ class CorrectionAssessment:
     reason: str
 
 
-def decide_correction(analysis: ImageQualityAnalysis) -> CorrectionAssessment:
+def decide_correction(
+    analysis: ImageQualityAnalysis, *, low_laplacian: float = LOW_LAPLACIAN_VARIANCE,
+    high_laplacian: float = HIGH_LAPLACIAN_VARIANCE,
+) -> CorrectionAssessment:
     """긴 변을 최대 512px로 제한한 이미지의 지표에서 판단과 근거를 반환한다.
 
     노출이나 명암 대비가 판단을 어렵게 하면 보류한다. 낮은 선명도에는
@@ -70,7 +73,7 @@ def decide_correction(analysis: ImageQualityAnalysis) -> CorrectionAssessment:
 
     laplacian = analysis.laplacian_variance
     direction = analysis.motion_direction
-    if laplacian <= LOW_LAPLACIAN_VARIANCE and (
+    if laplacian <= low_laplacian and (
         direction.angle_deg is not None and direction.confidence >= MIN_SUPPORTING_DIRECTION_SCORE
     ):
         return CorrectionAssessment(
@@ -78,7 +81,7 @@ def decide_correction(analysis: ImageQualityAnalysis) -> CorrectionAssessment:
             f"낮은 선명도 (Laplacian {laplacian:.1f})와 뚜렷한 FFT 방향성 ({direction.confidence:.3f}).",
         )
 
-    if laplacian >= HIGH_LAPLACIAN_VARIANCE and direction.angle_deg is None:
+    if laplacian >= high_laplacian and direction.angle_deg is None:
         return CorrectionAssessment(
             CorrectionDecision.SKIP,
             f"충분한 명암 대비와 높은 선명도 (Laplacian {laplacian:.1f}), 상충하는 FFT 방향 후보 없음.",
