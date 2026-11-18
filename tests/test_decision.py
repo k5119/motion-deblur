@@ -6,8 +6,9 @@ import cv2
 import numpy as np
 
 from motion_blur.analysis import analyze_image
+from motion_blur.classical import apply_motion_blur, linear_psf
 from motion_blur.decision import CorrectionDecision, decide_correction
-from tests.validate_motion_direction import linear_psf, textures
+from tests.validate_motion_direction import textures
 
 
 class CorrectionDecisionTest(unittest.TestCase):
@@ -17,7 +18,7 @@ class CorrectionDecisionTest(unittest.TestCase):
 
     def test_sharp_and_directionally_blurred_texture(self) -> None:
         image = self.images["multiscale"]
-        blurred = cv2.filter2D(image, -1, linear_psf(15, 45), borderType=cv2.BORDER_REFLECT_101)
+        blurred = apply_motion_blur(image, linear_psf(15, 45))
         for sample, expected in [(image, CorrectionDecision.SKIP), (blurred, CorrectionDecision.APPLY)]:
             with self.subTest(expected=expected):
                 assessment = decide_correction(analyze_image(sample))

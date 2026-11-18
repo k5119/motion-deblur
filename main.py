@@ -5,12 +5,12 @@ import logging
 from pathlib import Path
 from time import perf_counter
 
+from motion_blur import DEFAULT_WEIGHTS
 from motion_blur.analysis import analyze_image
 from motion_blur.decision import ASSESSMENT_MAX_SIZE, decide_correction
 from motion_blur.image_io import Image, limit_image_size, load_image, save_image
 
 LOGGER = logging.getLogger(__name__)
-DEFAULT_WEIGHTS = Path("models") / "NAFNet-GoPro-width32.pth"
 
 
 def positive_int(value: str) -> int:
