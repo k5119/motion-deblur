@@ -88,3 +88,27 @@ FFT 분석은 평균을 제거한 그레이스케일에 Hann 윈도우를 적용
 [판단 규칙과 검증 결과](docs/restoration-assessment.md)
 
 `motion_blur/_nafnet/`에는 공식 평가 설정에 맞춘 추론 코드와 라이선스가 포함되어 있습니다. [NAFNet 공식 평가 설정](https://github.com/megvii-research/NAFNet/blob/2b4af71ebe098a92a75910c233a3965a3e93ede4/options/test/GoPro/NAFNet-width32.yml)
+
+## 고전 복원 실험
+
+NumPy와 OpenCV만으로 합성 블러와 Wiener 복원을 실행할 수 있습니다.
+아래 명령은 PowerShell에서 프로젝트 루트를 기준으로 실행합니다.
+합성과 비교에는 새 폴더를, 단독 복원에는 새 PNG 경로를 지정합니다.
+
+```powershell
+python -m motion_blur.experiment synthesize "test_images\sharp.jpg" "results\synthetic" --angle 45 --length 15
+python -m motion_blur.experiment wiener "results\synthetic\blurred.png" "results\wiener-known.png" --psf "results\synthetic\psf.json" --k 0.005
+python -m motion_blur.experiment wiener "test_images\blurry.jpg" "results\wiener-estimated.png" --estimate --length 15 --k 0.005
+python -m motion_blur.experiment compare "test_images\sharp.jpg" "results\comparison" --angle 45 --length 15 --estimated-length 15 --max-size 384 --device cpu
+```
+
+각도는 오른쪽 수평 0°에서 시계 방향으로 측정하며, 길이는 처리 해상도의
+픽셀 단위입니다. 추정 모드의 길이는 사용자가 지정합니다. FFT 방향을
+추정할 수 없으면 해당 Wiener 복원을 생략하고 로그에 표시합니다.
+
+`compare`는 선명한 원본에서 블러를 합성하고, 동일 크기의 원본·블러·정답
+PSF Wiener·추정 PSF Wiener·NAFNet PNG와 `psf.json`, `metrics.json`을
+저장합니다. `--max-size`는 합성 **전에** 원본에 적용됩니다. 단독
+`wiener` 명령은 참조 영상이 없는 사진에도 사용할 수 있습니다.
+PSNR·SSIM은 선명한 참조 영상으로 합성한 비교 실험에서만 계산합니다.
+[수학적 원리와 실험 결과](docs/classical-restoration.md)

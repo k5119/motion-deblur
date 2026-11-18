@@ -9,28 +9,11 @@ import cv2
 import numpy as np
 
 from motion_blur.analysis import analyze_image
+from motion_blur.classical import apply_motion_blur, linear_psf
 from motion_blur.image_io import load_image, save_image
 
 ANGLES = (0, 30, 45, 60, 90, 135)
 LENGTHS = (9, 15, 21)
-
-
-def linear_psf(length: int, angle: float) -> np.ndarray:
-    """길이와 시계 방향 각도로 정규화된 아화소 선형 PSF를 만든다."""
-    size = length + 2
-    center = size // 2
-    radians = np.deg2rad(angle)
-    distance = np.linspace(-(length - 1) / 2, (length - 1) / 2, length * 32)
-    x = center + distance * np.cos(radians)
-    y = center + distance * np.sin(radians)
-    left = np.floor(x).astype(int)
-    top = np.floor(y).astype(int)
-    fx, fy = x - left, y - top
-    kernel = np.zeros((size, size))
-    for dy, wy in enumerate((1 - fy, fy)):
-        for dx, wx in enumerate((1 - fx, fx)):
-            np.add.at(kernel, (top + dy, left + dx), wy * wx)
-    return kernel / kernel.sum()
 
 
 def axial_error(expected: float, estimated: float) -> float:
@@ -82,9 +65,7 @@ def main() -> None:
             # 줄무늬와 평행한 움직임은 화소를 바꾸지 않는 실패 사례다.
             applied = [(15, 90)]
         for length, angle in [(0, None), *applied]:
-            case = image if angle is None else cv2.filter2D(
-                image, -1, linear_psf(length, angle), borderType=cv2.BORDER_REFLECT_101,
-            )
+            case = image if angle is None else apply_motion_blur(image, linear_psf(length, angle))
             result = analyze_image(case).motion_direction
             estimated = result.angle_deg
             error = axial_error(angle, estimated) if angle is not None and estimated is not None else None
