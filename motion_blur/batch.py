@@ -2,6 +2,7 @@
 
 import argparse
 from collections.abc import Callable
+from dataclasses import dataclass
 import csv
 import hashlib
 from itertools import product
@@ -34,6 +35,32 @@ FIELDS = (
     "device", "status", "detail",
 )
 PROCESS_ERRORS = (OSError, ValueError, RuntimeError, ImportError, MemoryError, cv2.error)
+
+
+@dataclass(frozen=True)
+class BatchOptions:
+    """CLI나 GUI에서 사용하는 배치 실행 설정."""
+
+    input: Path
+    output: Path
+    quick: bool = False
+    download_public: bool = False
+    max_size: int = 384
+    estimated_length: int | None = None
+    real_length: int = 15
+    k: float = DEFAULT_WIENER_K
+    device: str = "auto"
+    weights: Path = DEFAULT_WEIGHTS
+
+    def __post_init__(self) -> None:
+        if self.max_size < 0:
+            raise ValueError("최대 크기는 0 이상이어야 합니다.")
+        if self.real_length < 1 or (self.estimated_length is not None and self.estimated_length < 1):
+            raise ValueError("길이는 양의 정수여야 합니다.")
+        if not np.isfinite(self.k) or self.k <= 0:
+            raise ValueError("K는 유한한 양수여야 합니다.")
+        if self.device not in {"auto", "cpu", "cuda"}:
+            raise ValueError("장치는 auto, cpu, cuda 중 하나여야 합니다.")
 
 
 def download_public(directory: Path) -> None:
@@ -69,7 +96,7 @@ def find_inputs(root: Path, quick: bool) -> list[tuple[str, Path]]:
 
 def evaluate_case(
     base: dict, source: Image, angle: int | None, length: int | None,
-    args: argparse.Namespace, nafnet: Callable[[Image], Image] | None,
+    args: BatchOptions, nafnet: Callable[[Image], Image] | None,
     device: str | None, model_error: str | None,
 ) -> tuple[list[dict], dict[str, Image]]:
     """같은 관측 영상에 방법들을 실행하고 실패는 해당 방법의 상태로 남긴다."""
@@ -127,7 +154,7 @@ def evaluate_case(
     return rows, images
 
 
-def make_nafnet(args: argparse.Namespace) -> tuple[Callable[[Image], Image], str]:
+def make_nafnet(args: BatchOptions) -> tuple[Callable[[Image], Image], str]:
     """모델은 한 번만 로드하며 GPU 실행은 완료 시점까지 동기화한다."""
     from .restoration import load_model, restore_image, select_device
 
@@ -149,7 +176,7 @@ def make_nafnet(args: argparse.Namespace) -> tuple[Callable[[Image], Image], str
     return infer, str(device)
 
 
-def run(args: argparse.Namespace) -> int:
+def run_batch(args: BatchOptions) -> int:
     """CSV를 사례별로 기록하고 대표 입력별 몽타주와 요약 그래프를 저장한다."""
     from .batch_report import save_charts, save_montage
 
@@ -179,7 +206,7 @@ def run(args: argparse.Namespace) -> int:
             base = {"image": path.name, "data_type": kind}
             try:
                 original = load_image(path)
-                source = limit_image_size(original, args.max_size)
+                source = limit_image_size(original, args.max_size) if args.max_size else original
             except PROCESS_ERRORS as exc:
                 row = {**base, "method": "input", "status": "failed", "detail": str(exc)}
                 writer.writerow(row)
@@ -225,22 +252,20 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("output", type=Path, help="새 실험 출력 폴더")
     parser.add_argument("--quick", action="store_true", help="유형당 첫 입력과 한 가지 합성 조건")
     parser.add_argument("--download-public", action="store_true", help="공개 샘플 PNG 3개만 받기")
-    parser.add_argument("--max-size", type=int, default=384, help="실험 전 긴 변 상한 (기본 384)")
+    parser.add_argument("--max-size", type=int, default=384, help="실험 전 긴 변 상한 (기본 384, 0은 원본 크기)")
     parser.add_argument("--estimated-length", type=int, help="추정 Wiener 길이 재지정(px)")
     parser.add_argument("--real-length", type=int, default=15, help="촬영 블러의 가정 길이(px)")
     parser.add_argument("--k", type=float, default=DEFAULT_WIENER_K)
     parser.add_argument("--device", choices=("auto", "cpu", "cuda"), default="auto")
     parser.add_argument("--weights", type=Path, default=DEFAULT_WEIGHTS)
-    args = parser.parse_args(argv)
-    lengths = [args.max_size, args.real_length]
-    if args.estimated_length is not None:
-        lengths.append(args.estimated_length)
-    if min(lengths) < 1 or not np.isfinite(args.k) or args.k <= 0:
-        parser.error("크기와 길이는 양의 정수, K는 유한한 양수여야 합니다.")
+    try:
+        options = BatchOptions(**vars(parser.parse_args(argv)))
+    except ValueError as exc:
+        parser.error(str(exc))
 
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
     try:
-        return run(args)
+        return run_batch(options)
     except PROCESS_ERRORS as exc:
         LOGGER.error("실험 실패 — %s", exc)
         return 1
