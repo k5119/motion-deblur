@@ -1,0 +1,2 @@
+-r requirements-batch.txt
+scikit-image==0.25.2
