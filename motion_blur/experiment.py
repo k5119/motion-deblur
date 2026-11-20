@@ -4,13 +4,17 @@ import argparse
 import json
 import logging
 from pathlib import Path
+from time import perf_counter
 from typing import Literal
 
 import cv2
 import numpy as np
 
 from . import DEFAULT_WEIGHTS
-from .classical import DEFAULT_WIENER_K, apply_motion_blur, compare_quality, linear_psf, wiener_restore
+from .classical import (
+    BOUNDARIES, DEFAULT_NOISE_SEED, DEFAULT_RL_ITERATIONS, DEFAULT_WIENER_K,
+    Boundary, compare_quality, linear_psf, richardson_lucy_restore, synthesize_motion_blur, wiener_restore,
+)
 from .image_io import Image, limit_image_size, load_image, save_image
 from .motion_direction import MotionDirection, estimate_motion_direction
 
@@ -40,6 +44,7 @@ def read_psf(path: Path, image: Image) -> tuple[int, float]:
 
 def estimated_wiener(
     image: Image, length: int, k: float, *, direction: MotionDirection | None = None,
+    boundary: Boundary = "taper",
 ) -> tuple[Image | None, dict]:
     """FFT 방향 후보와 사용자가 지정한 길이로 Wiener 복원을 시도한다."""
     if direction is None:
@@ -49,7 +54,7 @@ def estimated_wiener(
         LOGGER.warning("추정 PSF 복원 생략 — FFT 방향 추정 불가 (점수 %.3f).", direction.confidence)
         return None, info
     LOGGER.info("추정 PSF — 각도 %.2f°, 지정 길이 %dpx, 점수 %.3f", direction.angle_deg, length, direction.confidence)
-    return wiener_restore(image, linear_psf(length, direction.angle_deg), k), info
+    return wiener_restore(image, linear_psf(length, direction.angle_deg), k, boundary=boundary), info
 
 
 def nafnet_restore(image: Image, weights: Path, device_choice: Literal["auto", "cpu", "cuda"]) -> Image:
@@ -69,7 +74,7 @@ def run_synthetic(args: argparse.Namespace, reference: Image) -> None:
         reference = limit_image_size(reference, args.max_size)
 
     psf = linear_psf(args.length, args.angle)
-    blurred = apply_motion_blur(reference, psf)
+    blurred = synthesize_motion_blur(reference, psf, noise_sigma=args.noise_sigma, seed=args.seed)
     height, width = reference.shape[:2]
     metadata = {
         "model": PSF_MODEL,
@@ -77,6 +82,8 @@ def run_synthetic(args: argparse.Namespace, reference: Image) -> None:
         "angle_deg": args.angle % 180,
         "height": height,
         "width": width,
+        "noise_sigma": args.noise_sigma,
+        "seed": args.seed,
     }
 
     images = {"blurred": blurred}
@@ -101,11 +108,33 @@ def run_synthetic(args: argparse.Namespace, reference: Image) -> None:
             LOGGER.info("%s — PSNR %.3f dB, SSIM %.4f", name, psnr, ssim)
             report["metrics"][name] = {"psnr_db": psnr if np.isfinite(psnr) else "inf", "ssim": ssim}
 
+    if args.command == "core-compare":
+        images["reference"] = reference
+        report = {"psf": metadata, "wiener_k": args.k, "metrics": {}}
+        for boundary in BOUNDARIES:
+            for count in (None, *dict.fromkeys(args.iterations)):
+                started = perf_counter()
+                if count is None:
+                    method = "wiener"
+                    image = wiener_restore(blurred, psf, args.k, boundary=boundary)
+                else:
+                    method = f"rl_{count}"
+                    image = richardson_lucy_restore(blurred, psf, count, boundary=boundary)
+                elapsed_ms = (perf_counter() - started) * 1000
+                name = f"{method}_{boundary}"
+                images[name] = image
+                psnr, ssim = compare_quality(reference, image)
+                report["metrics"][name] = {
+                    "psnr_db": psnr if np.isfinite(psnr) else "inf", "ssim": ssim, "elapsed_ms": elapsed_ms,
+                }
+        psnr, ssim = compare_quality(reference, blurred)
+        report["metrics"]["blurred"] = {"psnr_db": psnr if np.isfinite(psnr) else "inf", "ssim": ssim}
+
     args.output_dir.mkdir(parents=True, exist_ok=False)
     for name, image in images.items():
         save_image(args.output_dir / f"{name}.png", image)
     save_json(args.output_dir / "psf.json", metadata)
-    if args.command == "compare":
+    if args.command in {"compare", "core-compare"}:
         save_json(args.output_dir / "metrics.json", report)
     LOGGER.info("저장 완료 — %s (%d × %d)", args.output_dir, width, height)
 
@@ -116,37 +145,48 @@ def main(argv: list[str] | None = None) -> int:
     commands = parser.add_subparsers(dest="command", required=True)
     synthesize = commands.add_parser("synthesize", help="선명한 원본에서 블러와 PSF JSON 생성")
     compare = commands.add_parser("compare", help="선명한 원본에서 합성 후 Wiener·NAFNet 비교")
-    for command in (synthesize, compare):
+    core_compare = commands.add_parser("core-compare", help="CPU에서 경계와 RL 반복 횟수 비교")
+    core_compare.add_argument("--iterations", type=int, nargs="+", default=[10, 20, 40])
+    for command in (synthesize, compare, core_compare):
         command.add_argument("reference", type=Path, help="선명한 원본 이미지")
         command.add_argument("output_dir", type=Path, help="새 출력 폴더")
         command.add_argument("--angle", type=float, required=True, help="오른쪽 수평 0°, 시계 방향")
         command.add_argument("--length", type=int, required=True, help="합성 PSF 길이(px)")
         command.add_argument("--max-size", type=int, help="합성 전에 적용할 긴 변 최대 크기")
+        command.add_argument("--noise-sigma", type=float, default=0.0, help="0~1 픽셀 범위 기준 잡음 표준편차")
+        command.add_argument("--seed", type=int, default=DEFAULT_NOISE_SEED)
     compare.add_argument("--estimated-length", type=int, required=True, help="추정 PSF에 사용할 길이(px)")
     compare.add_argument("--device", choices=("auto", "cpu", "cuda"), default="auto")
     compare.add_argument("--weights", type=Path, default=DEFAULT_WEIGHTS)
 
     wiener = commands.add_parser("wiener", help="블러 이미지를 CPU에서 Wiener 복원")
-    wiener.add_argument("input", type=Path)
-    wiener.add_argument("output", type=Path, help="새 출력 PNG")
-    source = wiener.add_mutually_exclusive_group(required=True)
-    source.add_argument("--psf", type=Path, help="합성 시 저장한 정답 PSF JSON")
-    source.add_argument("--angle", type=float, help="수동 PSF 각도")
-    source.add_argument("--estimate", action="store_true", help="FFT 방향 후보 사용")
-    wiener.add_argument("--length", type=int, help="추정 PSF에 사용할 길이(px)")
-    for command in (compare, wiener):
+    rl = commands.add_parser("rl", help="블러 이미지를 CPU에서 Richardson–Lucy 복원")
+    rl.add_argument("--iterations", type=int, default=DEFAULT_RL_ITERATIONS)
+    for command in (wiener, rl):
+        command.add_argument("input", type=Path)
+        command.add_argument("output", type=Path, help="새 출력 PNG")
+        command.add_argument("--boundary", choices=BOUNDARIES, default="taper")
+        source = command.add_mutually_exclusive_group(required=True)
+        source.add_argument("--psf", type=Path, help="합성 시 저장한 정답 PSF JSON")
+        source.add_argument("--angle", type=float, help="수동 PSF 각도")
+        if command is wiener:
+            source.add_argument("--estimate", action="store_true", help="FFT 방향 후보 사용")
+        command.add_argument("--length", type=int, help="수동 또는 추정 PSF 길이(px)")
+    for command in (compare, core_compare, wiener):
         command.add_argument("--k", type=float, default=DEFAULT_WIENER_K, help="양의 Wiener 정규화 상수")
     args = parser.parse_args(argv)
-    if args.command == "wiener" and (args.estimate or args.angle is not None) != (args.length is not None):
+    if args.command in {"wiener", "rl"} and (args.psf is None) != (args.length is not None):
         parser.error("--length는 --estimate 또는 --angle과 함께 지정해야 합니다.")
 
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
     try:
-        if args.command in {"compare", "wiener"} and (not np.isfinite(args.k) or args.k <= 0):
+        if args.command in {"compare", "core-compare", "wiener"} and (not np.isfinite(args.k) or args.k <= 0):
             raise ValueError("Wiener K는 0보다 큰 유한한 값이어야 합니다.")
         if args.command == "compare" and args.estimated_length < 1:
             raise ValueError("추정 PSF 길이는 1 이상의 정수여야 합니다.")
-        if args.command != "wiener":
+        if args.command == "core-compare" and min(args.iterations) < 1:
+            raise ValueError("RL 반복 횟수는 1 이상이어야 합니다.")
+        if args.command not in {"wiener", "rl"}:
             run_synthetic(args, load_image(args.reference))
             return 0
 
@@ -155,20 +195,21 @@ def main(argv: list[str] | None = None) -> int:
         if args.output.exists():
             raise FileExistsError(f"새 출력 파일을 지정하세요. ({args.output})")
         image = load_image(args.input)
-        if args.estimate:
+        if getattr(args, "estimate", False):
             if args.length < 1:
                 raise ValueError("추정 PSF 길이는 1 이상의 정수여야 합니다.")
-            restored, _ = estimated_wiener(image, args.length, args.k)
+            restored, _ = estimated_wiener(image, args.length, args.k, boundary=args.boundary)
             if restored is None:
                 return 1
-        elif args.angle is not None:
-            LOGGER.info("수동 PSF — 각도 %.2f°, 길이 %dpx", args.angle, args.length)
-            restored = wiener_restore(image, linear_psf(args.length, args.angle), args.k)
         else:
-            length, angle = read_psf(args.psf, image)
-            LOGGER.info("정답 PSF — 각도 %.2f°, 길이 %dpx", angle, length)
-            restored = wiener_restore(image, linear_psf(length, angle), args.k)
-        LOGGER.info("Wiener 저장 완료 — %s (K=%g)", save_image(args.output, restored), args.k)
+            length, angle = read_psf(args.psf, image) if args.psf else (args.length, args.angle)
+            LOGGER.info("%s PSF — 각도 %.2f°, 길이 %dpx", "정답" if args.psf else "수동", angle, length)
+            psf = linear_psf(length, angle)
+            if args.command == "rl":
+                restored = richardson_lucy_restore(image, psf, args.iterations, boundary=args.boundary)
+            else:
+                restored = wiener_restore(image, psf, args.k, boundary=args.boundary)
+        LOGGER.info("%s 저장 완료 — %s (%s)", args.command, save_image(args.output, restored), args.boundary)
     except (OSError, ValueError, RuntimeError, ImportError, MemoryError, cv2.error) as exc:
         LOGGER.error("처리 실패 — %s", exc)
         return 1
