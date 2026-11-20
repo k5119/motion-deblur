@@ -208,3 +208,21 @@ python -m pytest -q
 실행합니다. 기본 RL 반복 횟수는 10·20·40으로 비교하며, 새 결과 디렉터리에
 PNG와 `metrics.json`을 저장합니다.
 [수학적 원리와 경계 실험 결과](docs/classical-core-validation.md)
+
+## 자동 PSF 후보로 Wiener·RL 복원
+
+자동 추정은 긴 변 최대 512px에서 FFT 또는 그래디언트 방향과
+켑스트럼 길이 후보를 구합니다. 원본 픽셀 단위로 변환한 PSF 하나를
+두 CPU 복원에 사용합니다. 자동 후보가 부족하면 결과 JSON에 이유를
+기록하고, 수동 각도나 길이를 지정해 다시 실행할 수 있습니다.
+
+```powershell
+python -m motion_blur.auto_restore test_images/captured_blurred/blur.jpg results/auto-fft
+python -m motion_blur.auto_restore test_images/captured_blurred/blur.jpg results/auto-gradient --direction gradient
+python -m motion_blur.auto_restore test_images/captured_blurred/blur.jpg results/manual-psf --angle 31 --length 15 --k 0.015 --iterations 8
+python -m tests.validate_psf_estimator test_images/public/camera.png test_images/public/chelsea.png test_images/public/astronaut.png | Set-Content -Encoding utf8 results/psf-validation.csv
+```
+
+새 출력 디렉터리에 `psf_estimate.json`과, 복원에 성공한 경우
+`wiener.png`, `rl.png`를 저장합니다. 참조 없는 사진에서는 PSNR과 SSIM을
+계산하지 않습니다. [추정 방법과 검증 결과](docs/psf-estimation-validation.md)
