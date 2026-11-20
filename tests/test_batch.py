@@ -39,7 +39,7 @@ class BatchExperimentTest(unittest.TestCase):
             self.assertEqual(len(find_inputs(root, quick=False)), 2)
 
     def test_batch_size_options(self) -> None:
-        self.assertEqual(BatchOptions(Path("input"), Path("output")).max_size, 384)
+        self.assertEqual(BatchOptions(Path("input"), Path("output")).max_size, 0)
         self.assertEqual(BatchOptions(Path("input"), Path("output"), max_size=0).max_size, 0)
         with self.assertRaises(ValueError):
             BatchOptions(Path("input"), Path("output"), max_size=-1)
@@ -66,3 +66,18 @@ class BatchExperimentTest(unittest.TestCase):
         self.assertEqual({key: len(group) for key, group in paired_quality(rows, "ssim").items()},
                          {(0, 9): 1, (45, 15): 1})
         self.assertEqual(paired_quality(rows, "psnr_db")[(0, 9)][0]["input"], float("inf"))
+
+    def test_manual_psf_runs_when_direction_cannot_be_estimated(self) -> None:
+        source = np.full((80, 520, 3), 128, dtype=np.uint8)
+        options = BatchOptions(Path("input"), Path("output"), real_angle=195, real_length=9)
+        rows, images = evaluate_case(
+            {"image": "captured.png"}, source, None, None, options, lambda observed: observed, "cpu", None,
+        )
+        estimated, manual = rows[2:4]
+        self.assertEqual(estimated["status"], "skipped_no_direction")
+        self.assertEqual(manual["status"], "ok")
+        self.assertEqual(manual["applied_angle_deg"], 15)
+        self.assertEqual(manual["applied_length_px"], 9)
+        self.assertEqual(manual["analysis_width"], 512)
+        self.assertEqual(images["wiener_manual"].shape, source.shape)
+        self.assertNotIn("psnr_db", manual)

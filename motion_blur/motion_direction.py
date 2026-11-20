@@ -21,7 +21,7 @@ class MotionDirection:
     confidence: float
 
 
-def estimate_motion_direction(gray: NDArray[np.uint8]) -> MotionDirection:
+def estimate_motion_direction(gray: NDArray[np.uint8], *, min_confidence: float = MIN_CONFIDENCE) -> MotionDirection:
     """8비트 그레이스케일에서 선형 모션과 양립하는 방향성의 축을 반환한다.
 
     DC 및 프레임 경계의 영향을 줄인 로그 스펙트럼을 극좌표에서 표본화한다.
@@ -29,6 +29,8 @@ def estimate_motion_direction(gray: NDArray[np.uint8]) -> MotionDirection:
     선형 PSF는 이동 방향으로 주파수를 감쇠시키므로, 강한 축에 수직인
     방향이 공간 영역의 이동 축 후보가 된다.
     """
+    if not 0 <= min_confidence <= 1:
+        raise ValueError("FFT 신뢰도 기준은 0~1이어야 합니다.")
     height, width = gray.shape
     if min(height, width) < 64 or gray.min() == gray.max():
         return MotionDirection(None, 0.0)
@@ -65,7 +67,7 @@ def estimate_motion_direction(gray: NDArray[np.uint8]) -> MotionDirection:
     # 대역별 축이 다르면 복소평균의 크기가 줄어 점수가 낮아진다.
     agreement = min(1.0, abs(mean_harmonic) / mean_strength)
     confidence = float(min(1.0, abs(mean_harmonic) / HARMONIC_SCALE) * agreement)
-    if confidence < MIN_CONFIDENCE:
+    if confidence < min_confidence:
         return MotionDirection(None, confidence)
 
     spectrum_axis = np.degrees(np.angle(mean_harmonic)) / 2

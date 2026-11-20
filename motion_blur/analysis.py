@@ -6,7 +6,7 @@ import cv2
 import numpy as np
 
 from .image_io import Image
-from .motion_direction import MotionDirection, estimate_motion_direction
+from .motion_direction import MIN_CONFIDENCE, MotionDirection, estimate_motion_direction
 
 DARK_PIXEL_MAX = 50
 BRIGHT_PIXEL_MIN = 205
@@ -24,7 +24,7 @@ class ImageQualityAnalysis:
     motion_direction: MotionDirection
 
 
-def analyze_image(image: Image) -> ImageQualityAnalysis:
+def analyze_image(image: Image, *, fft_confidence: float = MIN_CONFIDENCE) -> ImageQualityAnalysis:
     """(H, W, 3) uint8 BGR 배열을 받아 이미지 품질 지표를 반환한다.
 
     OpenCV로 8비트 그레이스케일로 변환한다. 평균 밝기는 명암값의
@@ -46,5 +46,5 @@ def analyze_image(image: Image) -> ImageQualityAnalysis:
         bright_pixel_ratio=float(histogram[BRIGHT_PIXEL_MIN:].sum() / gray.size),
         grayscale_histogram=tuple(histogram.tolist()),
         laplacian_variance=float(laplacian.var()),
-        motion_direction=estimate_motion_direction(gray),
+        motion_direction=estimate_motion_direction(gray, min_confidence=fft_confidence),
     )
