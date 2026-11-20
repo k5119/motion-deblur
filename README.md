@@ -188,3 +188,23 @@ Wiener K 실험은 정답 PSF, 추정 방향 PSF, 방향·길이 오차 PSF를 �
 reserved 바이트를 기록하며, 메모리가 부족해도 해상도를 자동으로 낮추지
 않습니다. `--real`은 참조 지표를 비워 둡니다.
 [실험 수치 및 남은 검증](docs/followup-validation.md)
+
+## 직접 구현 코어 검증
+
+합성 시 `--noise-sigma`는 정규화된 픽셀 범위의 가우시안 표준편차이며,
+기본값 0은 기존 무잡음 합성입니다. `--seed`는 `psf.json`에 기록됩니다.
+Wiener와 Richardson–Lucy(RL)는 CPU에서 실행되며 경계 처리를 선택할 수 있습니다.
+
+```powershell
+python -m motion_blur.experiment synthesize test_images/public/camera.png results/core-synth --angle 45 --length 15 --noise-sigma 0.01 --seed 702
+python -m motion_blur.experiment rl results/core-synth/blurred.png results/rl.png --psf results/core-synth/psf.json --iterations 20 --boundary taper
+python -m motion_blur.experiment wiener results/core-synth/blurred.png results/wiener.png --angle 45 --length 15 --boundary reflect
+python -m motion_blur.experiment core-compare test_images/public/camera.png results/core-study --angle 45 --length 15 --max-size 256 --noise-sigma 0.01 --seed 702
+python -m pip install pytest
+python -m pytest -q
+```
+
+`core-compare`는 같은 블러 입력으로 `wrap`, `reflect`, `taper`를 모두
+실행합니다. 기본 RL 반복 횟수는 10·20·40으로 비교하며, 새 결과 디렉터리에
+PNG와 `metrics.json`을 저장합니다.
+[수학적 원리와 경계 실험 결과](docs/classical-core-validation.md)
