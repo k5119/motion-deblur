@@ -234,7 +234,7 @@ python -m tests.validate_psf_estimator test_images/public/camera.png test_images
 
 ```powershell
 python -m pip install -r requirements-quantitative.txt
-python -m motion_blur.batch test_images results/public-setup --quick --download-public --max-size 128
+python -c "from pathlib import Path; from motion_blur.batch import download_public; download_public(Path('test_images/public'))"
 python -m motion_blur.quantitative test_images results/quant-quick --quick --max-size 128
 python -m motion_blur.quantitative test_images results/quant-full --nafnet --device cpu
 python -m motion_blur.quantitative test_images results/quant-full --nafnet --device cpu --resume
