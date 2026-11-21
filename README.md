@@ -294,3 +294,14 @@ python -m motion_blur.candidate_experiment results/candidates-rl --manifest test
 `results.csv`, 비교 PNG, 점수와 실제 품질의 관계를 그린
 `candidate_quality.png`가 저장됩니다. GoPro·RealBlur에서는 합성 PSF
 오차 열을 비워 둡니다. [선택 경계, 점수와 실패 결과](docs/blind-psf-candidates.md)
+
+GoPro의 공식 디렉터리를 그대로 사용할 수도 있습니다. 매칭 키는 같은
+시퀀스의 동일 파일명입니다. `blur_gamma`는 별도 입력 조건이며 CSV의
+`condition`으로 구분합니다. `--gopro-limit`은 조건별 상한입니다.
+
+```powershell
+python -m motion_blur.candidate_experiment results/gopro-subset --gopro-root data/gopro --gopro-condition both --gopro-limit 2
+```
+
+전체 다운로드 없이 사용할 예제 manifest와 합성 검증 스크립트의 실행법은
+[로컬 데이터 배치 안내](data/README.md)에 있습니다.

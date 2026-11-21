@@ -1,0 +1,4 @@
+dataset,id,blur,sharp,condition
+gopro,scene01/000001.png,gopro/GOPRO_Large/test/scene01/blur/000001.png,gopro/GOPRO_Large/test/scene01/sharp/000001.png,blur
+gopro,scene01/000001.png,gopro/GOPRO_Large/test/scene01/blur_gamma/000001.png,gopro/GOPRO_Large/test/scene01/sharp/000001.png,blur_gamma
+realblur-j,scene02/001.png,realblur/scene02/blur/001.png,realblur/scene02/sharp/001.png,

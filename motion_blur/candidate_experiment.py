@@ -15,7 +15,7 @@ from .batch import make_nafnet
 from .classical import compare_quality, linear_psf, synthesize_motion_blur
 from .experiment import save_json
 from .image_io import Image, limit_image_size, load_image
-from .paired_data import load_manifest
+from .paired_data import GOPRO_CONDITIONS, discover_gopro, load_manifest
 from .psf_search import Candidate, Method, restore_candidate, search_psf
 from .quantitative_report import montage, save
 
@@ -24,7 +24,7 @@ METHODS = ("wiener", "rl")
 SYNTHETIC = ((0, 9, 0.0), (30, 15, 0.01), (135, 35, 0.01))
 SEED = 702
 FIELDS = (
-    "dataset", "id", "width", "height", "method", "role", "status", "angle", "length", "origin",
+    "dataset", "id", "condition", "width", "height", "method", "role", "status", "angle", "length", "origin",
     "true_angle", "true_length", "sigma", "angle_error", "length_error", "selected", "score", "reblur_mae",
     "flat_noise", "overshoot", "psnr_db", "ssim", "worse_than_input", "worse_than_single",
     "other_candidate_better", "detail",
@@ -113,7 +113,7 @@ def evaluate_case(
 def plot(output: Path, rows: list[dict]) -> None:
     """후보 점수와 참조 품질 관계 및 동일 사례 복원 개선량을 표시한다."""
     fig = Figure(figsize=(11, 7), layout="constrained")
-    singles = {(r["dataset"], r["id"], r["method"]): r for r in rows if r["role"] == "single_fft"}
+    singles = {(r["dataset"], r["id"], r.get("condition"), r["method"]): r for r in rows if r["role"] == "single_fft"}
     for (scatter, deltas), (key, label) in zip(fig.subplots(2, 2), (("psnr_db", "PSNR (dB)"), ("ssim", "SSIM"))):
         candidates = [r for r in rows if r["role"] == "candidate" and np.isfinite(r.get(key, np.nan))]
         for selected in (False, True):
@@ -127,7 +127,7 @@ def plot(output: Path, rows: list[dict]) -> None:
             for row in rows:
                 if row["role"] != "selected" or row["method"] != method:
                     continue
-                baseline = singles[(row["dataset"], row["id"], method)]
+                baseline = singles[(row["dataset"], row["id"], row.get("condition"), method)]
                 first, second = baseline.get(key, np.nan), row.get(key, np.nan)
                 if np.isfinite(first) and np.isfinite(second):
                     group.append(second - first)
@@ -144,6 +144,9 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="블라인드 PSF 후보 복원 실험")
     parser.add_argument("output", type=Path)
     parser.add_argument("--manifest", type=Path)
+    parser.add_argument("--gopro-root", type=Path, help="GOPRO_Large 또는 이를 담은 폴더")
+    parser.add_argument("--gopro-condition", choices=(*GOPRO_CONDITIONS, "both"), default="blur")
+    parser.add_argument("--gopro-limit", type=int, help="조건별 최대 GoPro 쌍 수")
     parser.add_argument("--synthetic", type=Path, action="append", default=[])
     parser.add_argument("--observed", type=Path, action="append", default=[])
     parser.add_argument("--method", choices=METHODS, default="wiener")
@@ -154,7 +157,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--weights", type=Path, default=DEFAULT_WEIGHTS)
     parser.add_argument("--device", choices=("auto", "cpu", "cuda"), default="cpu")
     args = parser.parse_args(argv)
-    if not (args.manifest or args.synthetic or args.observed):
+    if not (args.manifest or args.gopro_root or args.synthetic or args.observed):
         parser.error("최소 하나의 입력 옵션이 필요합니다.")
     if args.max_size < 0 or not np.isfinite(args.k) or args.k <= 0 or args.iterations < 1:
         parser.error("크기, K, 반복 횟수를 확인하세요.")
@@ -166,7 +169,7 @@ def main(argv: list[str] | None = None) -> int:
     def cases(pairs):
         for pair in pairs:
             observed, reference = pair.load()
-            yield scaled(observed), scaled(reference), dict(dataset=pair.dataset, id=pair.pair_id)
+            yield scaled(observed), scaled(reference), dict(dataset=pair.dataset, id=pair.pair_id, condition=pair.condition)
         for index, path in enumerate(args.synthetic, 1):
             reference = scaled(load_image(path))
             for angle, length, sigma in SYNTHETIC:
@@ -178,6 +181,12 @@ def main(argv: list[str] | None = None) -> int:
 
     try:
         pairs = load_manifest(args.manifest) if args.manifest else []
+        if args.gopro_root:
+            conditions = GOPRO_CONDITIONS if args.gopro_condition == "both" else (args.gopro_condition,)
+            pairs.extend(discover_gopro(args.gopro_root, conditions=conditions, limit=args.gopro_limit))
+        keys = {(pair.dataset, pair.pair_id, pair.condition) for pair in pairs}
+        if len(keys) != len(pairs):
+            raise ValueError("manifest와 GoPro 디렉터리에서 같은 쌍 ID가 중복됩니다.")
         if not (pairs or args.synthetic or args.observed):
             raise ValueError("입력 쌍이 없습니다.")
         args.output.mkdir(parents=True, exist_ok=False)
@@ -196,7 +205,7 @@ def main(argv: list[str] | None = None) -> int:
             writer = csv.DictWriter(handle, fieldnames=FIELDS)
             writer.writeheader()
             for index, (observed, reference, info) in enumerate(cases(pairs), 1):
-                LOGGER.info("%s/%s", info["dataset"], info["id"])
+                LOGGER.info("%s/%s (조건 %s)", info["dataset"], info["id"], info.get("condition"))
                 height, width = observed.shape[:2]
                 summary = {**info, "width": width, "height": height}
                 rows, panels = evaluate_case(observed, reference, summary, method=args.method, k=args.k,
@@ -205,7 +214,8 @@ def main(argv: list[str] | None = None) -> int:
                 handle.flush()
                 all_rows.extend(rows)
                 montage(args.output / f"comparison-{index:03d}.png",
-                        {"image": info["id"], "width": width, "height": height,
+                        {"image": f'{info["id"]} [{info["condition"]}]' if info.get("condition") else info["id"],
+                         "width": width, "height": height,
                          "length": info.get("true_length"), "angle": info.get("true_angle"),
                          "sigma": info.get("sigma"), "has_reference": reference is not None}, panels)
         plot(args.output, all_rows)
