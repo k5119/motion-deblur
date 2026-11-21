@@ -252,3 +252,45 @@ AI 의존성이나 가중치가 없으면 해당 행만 생략 사유를 기록�
 해상도, 옵션, 코드, 라이브러리 버전 또는 모델 가중치가 달라지면 새 결과
 폴더를 사용합니다. 하나의 결과 폴더는 한 프로세스에서 실행합니다.
 [비교 조건과 검증 결과](docs/quantitative-validation.md)
+
+## GoPro·RealBlur 소규모 쌍과 블라인드 PSF 후보 비교
+
+GoPro 또는 RealBlur 전체 다운로드는 필요하지 않습니다. 사용할 원본 쌍만
+선택하고 다음 예처럼 CSV에 지정합니다. 경로는 CSV 위치를 기준으로
+해석합니다. 이미 데이터가 다른 폴더에 있으면 CSV 경로만 조정합니다.
+
+```text
+test_images/paired/
+├── pairs.csv
+├── gopro/scene01/blur/000001.png
+├── gopro/scene01/sharp/000001.png
+├── realblur-j/scene02/blur/001.png
+└── realblur-j/scene02/sharp/001.png
+```
+
+```csv
+dataset,id,blur,sharp
+gopro,gopro-01,gopro/scene01/blur/000001.png,gopro/scene01/sharp/000001.png
+realblur-j,real-j-01,realblur-j/scene02/blur/001.png,realblur-j/scene02/sharp/001.png
+```
+
+`realblur-r`과 `realblur`도 지원합니다. 영상 쌍은 원래 데이터셋의
+동일 샘플과 정렬된 해상도를 사용해야 합니다. 커맨드는 로컬 파일만 읽습니다.
+[GoPro 데이터셋](https://seungjunnah.github.io/Datasets/gopro.html) · [RealBlur 데이터셋](https://github.com/rimchang/RealBlur)
+
+```powershell
+python -m pip install -r requirements-batch.txt
+python -m motion_blur.candidate_experiment results/candidates-paired --manifest test_images/paired/pairs.csv --nafnet --device cpu
+python -m motion_blur.candidate_experiment results/candidates-synthetic --synthetic test_images/public/camera.png --max-size 256
+python -m motion_blur.candidate_experiment results/candidates-rl --manifest test_images/paired/pairs.csv --method rl --iterations 8
+```
+
+기본은 입력 해상도이며 `--max-size`는 축소 검증용입니다. `--method`는
+후보를 채점할 때 사용할 복원이며, 최종 후보로 Wiener와 RL을 모두
+비교합니다. 별도 `--observed` 입력에는 참조 지표를 쓰지 않습니다.
+`--nafnet`은 기존 모델과 비교가 가능한 경우에만 실행합니다.
+
+새 출력 폴더에는 후보별 점수·PSNR·SSIM과 실패 플래그를 담은
+`results.csv`, 비교 PNG, 점수와 실제 품질의 관계를 그린
+`candidate_quality.png`가 저장됩니다. GoPro·RealBlur에서는 합성 PSF
+오차 열을 비워 둡니다. [선택 경계, 점수와 실패 결과](docs/blind-psf-candidates.md)
