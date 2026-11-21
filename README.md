@@ -226,3 +226,29 @@ python -m tests.validate_psf_estimator test_images/public/camera.png test_images
 새 출력 디렉터리에 `psf_estimate.json`과, 복원에 성공한 경우
 `wiener.png`, `rl.png`를 저장합니다. 참조 없는 사진에서는 PSNR과 SSIM을
 계산하지 않습니다. [추정 방법과 검증 결과](docs/psf-estimation-validation.md)
+
+## 4단계 정량 복원 비교
+
+직접 구현과 scikit-image를 같은 입력·PSF로 비교하는 별도 명령입니다.
+기존 실험 명령과 복원 기본값은 그대로 사용할 수 있습니다.
+
+```powershell
+python -m pip install -r requirements-quantitative.txt
+python -c "from pathlib import Path; from motion_blur.batch import download_public; download_public(Path('test_images/public'))"
+python -m motion_blur.quantitative test_images results/quant-quick --quick --max-size 128
+python -m motion_blur.quantitative test_images results/quant-full --nafnet --device cpu
+python -m motion_blur.quantitative test_images results/quant-full --nafnet --device cpu --resume
+```
+
+이미 공개 샘플이 있으면 공개 이미지 준비 명령을 생략합니다. 입력 하위 폴더는
+`public`, `captured_sharp`, `captured_blurred`입니다. Full은 선명 이미지마다
+4 길이 × 4 방향 × 4 잡음, 총 64조건을 원본 크기에서 실행합니다.
+`--nafnet`은 대표 조건과 참조 없는 사진에서만 선택적으로 AI를 비교합니다.
+AI 의존성이나 가중치가 없으면 해당 행만 생략 사유를 기록합니다.
+
+결과 폴더에는 전체 `results.csv`, 품질·K·반복 횟수·추정 오차 PNG,
+`comparisons/`의 정성 비교, `cases/`의 완료 캐시가 저장됩니다.
+중단 뒤에는 같은 설정과 실행 환경에서 `--resume`을 사용합니다. 원본,
+해상도, 옵션, 코드, 라이브러리 버전 또는 모델 가중치가 달라지면 새 결과
+폴더를 사용합니다. 하나의 결과 폴더는 한 프로세스에서 실행합니다.
+[비교 조건과 검증 결과](docs/quantitative-validation.md)
