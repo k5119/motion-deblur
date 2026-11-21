@@ -29,7 +29,8 @@ def montage(path: Path, info: dict, panels: dict) -> None:
             ax.text(0.5, 0.5, "Unavailable / skipped", ha="center")
         else:
             ax.imshow(image[:, :, ::-1])
-    suffix = ("no reference" if info["length"] is None else
+    suffix = (("paired reference | unknown PSF" if info.get("has_reference") else "no reference")
+              if info["length"] is None else
               f'L={info["length"]} px, angle={info["angle"]}°, sigma={info["sigma"]}')
     ax_title = info["image"].encode("ascii", errors="replace").decode()
     fig.suptitle(f'{ax_title} | {info["width"]}×{info["height"]} | {suffix}')

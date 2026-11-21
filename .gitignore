@@ -42,3 +42,17 @@ checkpoints/
 *.ckpt
 *.safetensors
 *.onnx
+
+# 데이터셋과 개인 원본은 로컬에 보관
+/data/gopro/*
+!/data/gopro/.gitkeep
+/data/realblur/*
+!/data/realblur/.gitkeep
+/data/captured/
+/data/web_blur/
+*.mp4
+*.mov
+*.avi
+*.mkv
+*.webm
+*.m4v
